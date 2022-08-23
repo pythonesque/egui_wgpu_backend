@@ -238,6 +238,23 @@ impl RenderPass {
         screen_descriptor: &ScreenDescriptor,
         clear_color: Option<wgpu::Color>,
     ) {
+        let texture_bind_group = &self.texture_bind_group;
+        let user_textures = &self.user_textures;
+        let get_texture_bind_group = |texture_id| match texture_id {
+            egui::TextureId::Egui => texture_bind_group
+                .as_ref()
+                .expect("egui texture was not set before the first draw"),
+            egui::TextureId::User(id) => {
+                let id = id as usize;
+                assert!(id < user_textures.len());
+                &(user_textures
+                    .get(id)
+                    .unwrap_or_else(|| panic!("user texture {} not found", id))
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("user texture {} freed", id)))
+            }
+        };
+
         let load_operation = if let Some(color) = clear_color {
             wgpu::LoadOp::Clear(color)
         } else {
@@ -267,8 +284,8 @@ impl RenderPass {
 
         for ((egui::ClippedMesh(clip_rect, mesh), vertex_buffer), index_buffer) in paint_jobs
             .iter()
-            .zip(self.vertex_buffers.iter())
-            .zip(self.index_buffers.iter())
+            .zip(self.vertex_buffers.iter_mut())
+            .zip(self.index_buffers.iter_mut())
         {
             // Transform clip rect to physical pixels.
             let clip_min_x = scale_factor * clip_rect.min.x;
@@ -304,7 +321,7 @@ impl RenderPass {
 
                 pass.set_scissor_rect(x, y, width, height);
             }
-            pass.set_bind_group(1, self.get_texture_bind_group(mesh.texture_id), &[]);
+            pass.set_bind_group(1, get_texture_bind_group(mesh.texture_id), &[]);
 
             pass.set_index_buffer(index_buffer.buffer.slice(..), wgpu::IndexFormat::Uint32);
             pass.set_vertex_buffer(0, vertex_buffer.buffer.slice(..));
@@ -312,25 +329,6 @@ impl RenderPass {
         }
 
         pass.pop_debug_group();
-    }
-
-    fn get_texture_bind_group(&self, texture_id: egui::TextureId) -> &wgpu::BindGroup {
-        match texture_id {
-            egui::TextureId::Egui => self
-                .texture_bind_group
-                .as_ref()
-                .expect("egui texture was not set before the first draw"),
-            egui::TextureId::User(id) => {
-                let id = id as usize;
-                assert!(id < self.user_textures.len());
-                &(self
-                    .user_textures
-                    .get(id)
-                    .unwrap_or_else(|| panic!("user texture {} not found", id))
-                    .as_ref()
-                    .unwrap_or_else(|| panic!("user texture {} freed", id)))
-            }
-        }
     }
 
     /// Updates the texture used by egui for the fonts etc. Should be called before `execute()`.
